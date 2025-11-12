@@ -136,6 +136,20 @@ npm run codex:server
 
 Keep the process running via `pm2`, `systemd`, `forever`, or any other supervisor. If you need HTTPS, front the service with Nginx/Caddy pointing to `localhost:8080`. You can run `npm run codex:chat` alongside the server for CLI interaction.
 
+### One-command setup for Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/begonia599/CodexBridge/master/scripts/install.sh | bash
+```
+
+The script:
+1. Installs git, Node.js, Docker, and Docker Compose if missing.
+2. Clones/pulls the repo to `~/codexbridge` (override via `CODEXBRIDGE_DIR` env var).
+3. Copies `.env.example` → `.env` (edit afterward).
+4. Runs `docker compose up -d --build`.
+
+> Requires sudo privileges to install system packages and Docker.
+
 ## Docker
 
 ### Docker Compose

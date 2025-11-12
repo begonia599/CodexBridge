@@ -132,6 +132,20 @@ npm run codex:server
 
 如需常驻后台，可搭配 `pm2`、`systemd`、`nohup` 等方式运行；若需要 HTTPS，可在前面挂 Nginx / Caddy 等反向代理。想要 CLI 配合时再运行 `npm run codex:chat`。
 
+### Linux 一键脚本
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/begonia599/CodexBridge/master/scripts/install.sh | bash
+```
+
+脚本会：
+1. 自动安装 git、Node.js、Docker、Docker Compose（如尚未安装）。
+2. 克隆或更新仓库到 `~/codexbridge`（可通过 `CODEXBRIDGE_DIR` 环境变量自定义路径）。
+3. 将 `.env.example` 复制为 `.env`（请随后自行编辑）。
+4. 执行 `docker compose up -d --build` 启动服务。
+
+> 脚本需要 sudo 权限以安装系统依赖和 Docker。
+
 ## Docker 部署
 
 ### Docker Compose
