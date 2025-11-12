@@ -2,23 +2,22 @@
 
 [‰∏≠ÊñáÁâàÊú¨](README.zh-CN.md)
 
-CodexBridge wraps the official Codex CLI/SDK and exposes it via an OpenAI-compatible `/v1/chat/completions` endpoint. It also ships with a tiny CLI so you can talk to Codex locally. Any OpenAI-style client (OpenWebUI, Cherry Studio, curl, etc.) can treat Codex as if it were a standard model.
+CodexBridge wraps the official Codex CLI/SDK and exposes it as an OpenAI-compatible `/v1/chat/completions` endpoint. It also ships with a tiny CLI so you can talk to Codex locally. Any OpenAI-style client (OpenWebUI, Cherry Studio, curl, etc.) can treat CodexBridge as a drop-in model.
 
 ## Highlights
 
-- **OpenAI-compatible API** ‚Ä?`/v1/chat/completions` (sync + SSE) plus `/v1/models`.
-- **Persistent sessions** ‚Ä?`session_id` / `conversation_id` / `thread_id` / `user` keep Codex context; omit them for ephemeral runs.
-- **Multimodal input** ‚Ä?Accepts `image_url` / `local_image` blocks (HTTP(S), `file://`, `data:` URIs, local paths) and converts them to Codex `local_image`.
-- **Structured output** ‚Ä?Maps OpenAI `response_format` (JSON schema / JSON object) to Codex `outputSchema`.
-- **Configurable sandbox** ‚Ä?Environment variables control filesystem access, working directory, networking, web search, approval policy.
-- **CLI chat** ‚Ä?`npm run codex:chat` is a single-thread REPL for local experiments.
-- **Self-hosted storage** ‚Ä?Codex sessions stay under `~/.codex/sessions`; bridge mappings live in `.codex_threads.json`.
+- **OpenAI-compatible API** ‚Äì `/v1/chat/completions` (sync + SSE) plus `/v1/models`.
+- **Persistent sessions** ‚Äì Use `session_id` / `conversation_id` / `thread_id` / `user` to keep Codex context; omit them for ephemeral runs.
+- **Multimodal input** ‚Äì Accepts `image_url` and `local_image` blocks (HTTP(S), `file://`, `data:` URIs, local paths) and automatically converts them to Codex `local_image`.
+- **Structured output** ‚Äì Maps OpenAI `response_format` / `output_schema` to Codex `outputSchema` so the agent must return JSON that matches your schema.
+- **Configurable sandbox** ‚Äì Environment variables control filesystem access, working directory, networking, web search, and approval policy.
+- **Self-hosted storage** ‚Äì Codex sessions live in `~/.codex/sessions`; bridge mappings stay in `.codex_threads.json`.
 
 ## Requirements
 
 - Node.js 18+
-- Codex CLI installed & authenticated on the same machine
-- npm (or adapt scripts for pnpm/yarn)
+- Codex CLI installed and authenticated on the same machine
+- npm (or adapt scripts for pnpm / yarn)
 
 ## Installation
 
@@ -30,9 +29,9 @@ cp .env.example .env
 cp .env .env.local   # optional custom config
 ```
 
-Edit `.env` / `.env.local` to set defaults. Replace the sample API key before exposing the server.
+Edit `.env` / `.env.local` before exposing the service (API key, sandbox mode, working directory, etc.).
 
-## CLI Chat
+## CLI chat
 
 ```bash
 npm run codex:chat
@@ -40,11 +39,11 @@ npm run codex:chat
 
 - Type natural language commands; Codex replies inline.
 - `/reset` starts a new Codex thread.
-- `/exit` quits.
+- `/exit` leaves the REPL.
 
-Thread IDs persist in `.codex_thread.json`, so closing and reopening the CLI keeps context.
+Thread IDs are cached in `.codex_thread.json`, so you can close the CLI and continue later.
 
-## HTTP Bridge
+## HTTP bridge
 
 ```bash
 npm run codex:server
@@ -52,7 +51,7 @@ npm run codex:server
 
 - Default port: `8080` (`PORT` overrides)
 - Health check: `GET /health`
-- Session map: `.codex_threads.json` (delete to wipe bridge-level sessions)
+- Session map: `.codex_threads.json` (delete to reset bridge-managed sessions)
 
 ### Basic request
 
@@ -63,18 +62,12 @@ curl http://localhost:8080/v1/chat/completions \
   -d '{"model":"gpt-5-codex:medium","session_id":"demo","messages":[{"role":"user","content":"ls"}]}'
 ```
 
-Notes:
-
-- Model IDs encode reasoning effort as `model:level` (e.g. `gpt-5-codex:low`). Omitting `:level` falls back to `.env` defaults.
-- Any of `session_id`, `conversation_id`, `thread_id`, or `user` identifies a session. Provide one to resume context; omit all to create an ephemeral run.
-- With `session_id`, the bridge sends only the latest user turn (system prompts prepended) so Codex manages history. Without it, the entire message history is flattened into `[ROLE]` blocks and sent as a single prompt.
-
 ### Session IDs & persistence
 
-- In production/front-end setups, enable `CODEX_REQUIRE_SESSION_ID=true` so every request must include a session identifier.
-- IDs can be sent in the JSON body (`session_id` / `conversation_id` / `thread_id` / `user`) or via headers (`x-session-id`, `session-id`, `x-conversation-id`, `x-thread-id`, `x-user-id`). Headers are convenient for global middleware.
-- IDs must be non-empty strings (UUID, user ID, chat ID, etc.). Avoid numeric-only payloads or nested objects.
-- If all identifiers are missing and `CODEX_REQUIRE_SESSION_ID` is `false`, the bridge creates an ephemeral thread (history flattened, no persistence).
+- In production/front-end setups enable `CODEX_REQUIRE_SESSION_ID=true` so every request must include a session identifier.
+- IDs can be supplied in the JSON body (`session_id` / `conversation_id` / `thread_id` / `user`) or via headers (`x-session-id`, `session-id`, `x-conversation-id`, `x-thread-id`, `x-user-id`).
+- IDs must be non-empty strings (UUID, user ID, chat ID, etc.). Avoid numeric-only or nested objects.
+- If all identifiers are omitted and `CODEX_REQUIRE_SESSION_ID` is `false`, CodexBridge flattens the entire `messages` history into `[ROLE]` blocks and sends it as a one-off prompt.
 
 ### Streaming
 
@@ -89,30 +82,16 @@ Response is SSE (`data: {...}`) ending with `data: [DONE]`.
 
 ### Multimodal input
 
-- `{"type":"image_url","image_url":{"url":"https://..."}}` ‚Ä?HTTP(S) / `file://` / `data:image/...` / relative/absolute paths.
-- `{"type":"local_image","path":"./relative/or/absolute.jpg"}` (or `image_path`).
+The bridge understands OpenAI-style content arrays. Examples:
 
-Remote resources are downloaded to a temp directory, passed to Codex as `local_image`, then cleaned up.
+- `{"type":"image_url","image_url":{"url":"https://example.com/demo.png"}}`
+- `{"type":"local_image","path":"./images/demo.png"}`
 
-```json
-{
-  "model": "gpt-5-codex",
-  "session_id": "vision-demo",
-  "messages": [
-    {
-      "role": "user",
-      "content": [
-        { "type": "text", "text": "Describe this UI screenshot." },
-        { "type": "image_url", "image_url": { "url": "https://example.com/screenshot.png" } }
-      ]
-    }
-  ]
-}
-```
+Remote URLs and data URIs are downloaded to a temp folder, converted to Codex `local_image`, then cleaned up after the turn.
 
 ### Structured JSON output
 
-CodexBridge forwards OpenAI `response_format` (or `output_schema`) to Codex `outputSchema`.
+CodexBridge forwards OpenAI `response_format` to Codex `outputSchema`:
 
 ```json
 {
@@ -134,18 +113,17 @@ CodexBridge forwards OpenAI `response_format` (or `output_schema`) to Codex `out
     }
   },
   "messages": [
-    { "role": "user", "content": "Check src/ for lint problems and output JSON following the schema." }
+    { "role": "user", "content": "Check src/ for lint problems and return JSON following the schema." }
   ]
 }
 ```
 
-- `type: "json_schema"` requires `json_schema.schema` (or `schema`). Missing/invalid schemas return HTTP 400.
-- `type: "json_object"` is shorthand for `{ "type": "object" }`.
+`type: "json_schema"` must include a `schema`. Missing or invalid schemas trigger HTTP 400.
 
 ### Networking & search
 
-- `CODEX_NETWORK_ACCESS=true` allows networked commands (`curl`, `git clone`, API calls).
-- `CODEX_WEB_SEARCH=true` enables Codex‚Äôs built-in browsing tool.
+- `CODEX_NETWORK_ACCESS=true` allows Codex to run networked commands (`curl`, `git clone`, API calls).
+- `CODEX_WEB_SEARCH=true` lets Codex use its built-in web search tool.
 
 Both default to `false`.
 
@@ -153,11 +131,10 @@ Both default to `false`.
 
 ```bash
 cp .env.example .env
-# edit .env as needed, then:
 npm run codex:server
 ```
 
-Keep the process running via your preferred supervisor (`pm2`, `systemd`, `forever`, etc.), or use a reverse proxy (Nginx/Caddy) in front of `localhost:8080` if you need HTTPS. Run `npm run codex:chat` alongside the server when you want CLI interaction in the same workspace.
+Keep the process running via `pm2`, `systemd`, `forever`, or any other supervisor. If you need HTTPS, front the service with Nginx/Caddy pointing to `localhost:8080`. You can run `npm run codex:chat` alongside the server for CLI interaction.
 
 ## Docker
 
@@ -165,13 +142,10 @@ Keep the process running via your preferred supervisor (`pm2`, `systemd`, `forev
 
 ```bash
 docker compose up -d
-
-# view logs
 docker compose logs -f codexbridge
 ```
 
-> Use `docker compose` on PowerShell 7+ / modern Docker Desktop. Replace with `docker-compose` if you rely on the legacy command.
-> Compose mounts Codex state under `./codex-data` (auto-created). Delete this directory to reset Codex threads.
+> Compose mounts Codex data under `./codex-data` (auto-created). Delete that directory to reset Codex threads. Use `docker-compose` instead if you rely on the legacy command.
 
 ### Docker CLI
 
@@ -186,21 +160,15 @@ docker run --rm -p 8080:8080 \
   codexbridge
 ```
 
-Tips:
-
-- On Linux/macOS replace `%LOCALAPPDATA%\Codex` with `~/.codex`.
-- Mount repositories you want Codex to access under `/workspace` (or set `CODEX_WORKDIR`).
-- Codex sessions persist inside the mounted `.codex` directory.
-
 ## Environment variables
 
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP port |
 | `CODEX_MODEL` | `gpt-5-codex` | Default model |
-| `CODEX_REASONING` | `medium` | Default reasoning (`low` / `medium` / `high`) |
+| `CODEX_REASONING` | `medium` | Default reasoning effort (`low` / `medium` / `high`) |
 | `CODEX_BRIDGE_API_KEY` | `123321` | API key for `Authorization: Bearer` / `x-api-key` |
-| `CODEX_SKIP_GIT_CHECK` | `true` | Skip Codex ‚Äútrusted Git repo‚Ä?requirement |
+| `CODEX_SKIP_GIT_CHECK` | `true` | Skip Codex ‚Äútrusted Git repo‚Äù requirement |
 | `CODEX_SANDBOX_MODE` | `read-only` | `read-only` / `workspace-write` / `danger-full-access` |
 | `CODEX_WORKDIR` | empty | Force Codex threads to run inside this directory |
 | `CODEX_NETWORK_ACCESS` | `false` | Allow networked commands |
@@ -212,20 +180,18 @@ Tips:
 
 ## Troubleshooting
 
-- **413 PayloadTooLargeError** ‚Ä?Increase `CODEX_JSON_LIMIT`, especially when sending base64 images.
-- **‚ÄúInvalid or missing API key‚Ä?* ‚Ä?Provide `Authorization: Bearer <CODEX_BRIDGE_API_KEY>` or `x-api-key`.
-- **Codex refuses to run (Git check)** ‚Ä?Only disable `CODEX_SKIP_GIT_CHECK` if the working directory is a trusted repo.
-- **Need a clean slate** ‚Ä?Stop the server and delete `.codex_threads.json` and/or `~/.codex/sessions`.
+- **413 PayloadTooLargeError** ‚Äì Increase `CODEX_JSON_LIMIT` when sending base64 images or large bodies.
+- **‚ÄúInvalid or missing API key‚Äù** ‚Äì Provide the correct `Authorization: Bearer <CODEX_BRIDGE_API_KEY>` or `x-api-key`.
+- **Codex refuses to run (Git check)** ‚Äì Disable `CODEX_SKIP_GIT_CHECK` only if the working directory is a trusted repo.
+- **Need a clean slate** ‚Äì Stop the server and delete `.codex_threads.json` and/or `~/.codex/sessions`.
 
 ## License
 
-Non-commercial use only. See [LICENSE](LICENSE) for full terms. Commercial usage requires prior written permission from begonia.
-
-Contributions are welcome! If you extend CodexBridge or integrate it with other tools, feel free to open issues or PRs.
+Non-commercial use only. See [LICENSE](LICENSE) for the full terms. Commercial usage requires prior written permission from begonia.
 
 ## Support & contact
 
 - Repository: https://github.com/begonia599/CodexBridge
 - Email: `begonia@bgnhub.me`
 
-Feel free to reach out if you run into problems, want new features, or plan to fork and rework CodexBridge. I‚Äôm happy to help and love seeing derivative projects.
+Feel free to reach out if you run into problems, want new features, or plan to fork and rework CodexBridge. Contributions and derivative projects are welcome.
