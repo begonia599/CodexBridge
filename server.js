@@ -18,6 +18,9 @@ const DEFAULT_REASONING =
   "medium";
 const PORT = Number(process.env.PORT ?? 8080);
 const STATE_FILE = path.join(__dirname, ".codex_threads.json");
+const PUBLIC_DIR = path.join(__dirname, "public");
+const DASHBOARD_HTML = path.join(PUBLIC_DIR, "dashboard.html");
+let requestCounter = 0;
 const SHOULD_SKIP_GIT =
   process.env.CODEX_SKIP_GIT_CHECK === "false" ? false : true;
 const API_KEY = process.env.CODEX_BRIDGE_API_KEY ?? "123321";
@@ -39,6 +42,14 @@ const REQUIRE_SESSION_ID = readBooleanEnv(
   false,
 );
 const JSON_LIMIT = process.env.CODEX_JSON_LIMIT ?? "10mb";
+const APP_START = Date.now();
+const DEFAULT_CODEX_DIR =
+  process.env.CODEX_STATE_DIR ?? path.join(os.homedir(), ".codex");
+const CODEX_STATE_DIR =
+  process.env.CODEX_STATE_DIR ?? process.env.CODEX_DIR ?? DEFAULT_CODEX_DIR;
+const CODEX_AUTH_FILE =
+  process.env.CODEX_AUTH_FILE ?? path.join(CODEX_STATE_DIR, "auth.json");
+const APP_VERSION = process.env.npm_package_version ?? "dev";
 
 const MODEL_PRESETS = [
   {
@@ -82,6 +93,31 @@ const saveQueue = createSaveQueue();
 
 const app = express();
 app.use(express.json({ limit: JSON_LIMIT }));
+app.use((req, _res, next) => {
+  if (!req.path.startsWith("/public")) {
+    requestCounter += 1;
+  }
+  next();
+});
+if (await fileExists(DASHBOARD_HTML)) {
+  app.use("/public", express.static(PUBLIC_DIR));
+  app.get("/dashboard", (_req, res) => {
+    res.sendFile(DASHBOARD_HTML);
+  });
+  app.get("/api/dashboard", async (_req, res) => {
+    try {
+      const snapshot = await buildDashboardSnapshot();
+      res.json(snapshot);
+    } catch (error) {
+      console.error("Failed to build dashboard snapshot:", error);
+      res.status(500).json({
+        error: {
+          message: "Failed to load Codex dashboard data.",
+        },
+      });
+    }
+  });
+}
 app.use((req, res, next) => {
   if (req.path === "/health") return next();
   if (!API_KEY) return next();
@@ -824,6 +860,140 @@ async function cleanupAttachmentFiles(cleanups) {
       }
     }),
   );
+}
+
+async function fileExists(targetPath) {
+  try {
+    await fs.access(targetPath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function buildDashboardSnapshot() {
+  const account = await readAccountMetadata();
+  return {
+    generatedAt: new Date().toISOString(),
+    account,
+    stats: {
+      totalRequests: requestCounter,
+      activeSessions: persistedThreadIds.size,
+      uptimeSeconds: Math.floor((Date.now() - APP_START) / 1000),
+      sandboxMode: SANDBOX_MODE ?? "default",
+      approvalPolicy: APPROVAL_POLICY ?? "never",
+      networkAccess: Boolean(NETWORK_ACCESS),
+      webSearch: Boolean(WEB_SEARCH),
+      version: APP_VERSION,
+    },
+    tokens: Array.isArray(account?.tokens) ? account.tokens : [],
+  };
+}
+
+async function readAccountMetadata() {
+  const auth = await readJsonFile(CODEX_AUTH_FILE);
+  if (!auth) {
+    return {
+      status: "missing",
+      source: CODEX_AUTH_FILE,
+    };
+  }
+
+  const tokens = auth?.tokens ?? {};
+  const idToken =
+    tokens?.id_token ??
+    tokens?.idToken ??
+    auth?.id_token ??
+    auth?.idToken ??
+    null;
+  const accessToken =
+    tokens?.access_token ??
+    tokens?.accessToken ??
+    auth?.access_token ??
+    null;
+
+  const idPayload = idToken ? decodeJwtPayload(idToken) : null;
+  const accessPayload = accessToken ? decodeJwtPayload(accessToken) : null;
+
+  const issuedAt = unixToIso(accessPayload?.iat ?? idPayload?.iat);
+  const expiresAt = unixToIso(accessPayload?.exp ?? idPayload?.exp);
+  const status = deriveStatus(accessPayload?.exp ?? idPayload?.exp);
+
+  const tokenMeta = [];
+  if (accessToken) {
+    tokenMeta.push({
+      type: "Access Token",
+      email:
+        accessPayload?.["https://api.openai.com/profile"]?.email ??
+        accessPayload?.email ??
+        null,
+      issuer: accessPayload?.iss ?? null,
+      issuedAt: unixToIso(accessPayload?.iat),
+      expiresAt: unixToIso(accessPayload?.exp),
+      status: deriveStatus(accessPayload?.exp),
+      preview: formatTokenPreview(accessToken),
+      scopes: accessPayload?.scope ?? tokens?.scope ?? tokens?.scopes ?? null,
+      audience: Array.isArray(accessPayload?.aud)
+        ? accessPayload.aud.join(", ")
+        : accessPayload?.aud ?? null,
+    });
+  }
+
+  return {
+    status,
+    email:
+      idPayload?.email ??
+      accessPayload?.["https://api.openai.com/profile"]?.email ??
+      auth?.email ??
+      null,
+    issuer: idPayload?.iss ?? accessPayload?.iss ?? null,
+    accountId: tokens?.account_id ?? auth?.account_id ?? null,
+    subject: idPayload?.sub ?? accessPayload?.sub ?? null,
+    issuedAt,
+    expiresAt,
+    device: auth?.device?.name ?? auth?.device_id ?? null,
+    source: CODEX_AUTH_FILE,
+    tokens: tokenMeta,
+  };
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const payload = parts[1];
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded =
+      normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+async function readJsonFile(targetPath) {
+  try {
+    const raw = await fs.readFile(targetPath, "utf8");
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+function unixToIso(value) {
+  if (value === undefined || value === null) return null;
+  return new Date(value * 1000).toISOString();
+}
+
+function deriveStatus(exp) {
+  if (exp === undefined || exp === null) return "unknown";
+  return Date.now() > exp * 1000 ? "expired" : "active";
+}
+
+function formatTokenPreview(token) {
+  if (!token || token.length < 12) return token ?? null;
+  return `${token.slice(0, 12)}…${token.slice(-6)}`;
 }
 
 async function getOrCreateThread(sessionId, threadOptions) {

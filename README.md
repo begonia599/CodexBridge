@@ -136,6 +136,10 @@ npm run codex:server
 
 Keep the process running via `pm2`, `systemd`, `forever`, or any other supervisor. If you need HTTPS, front the service with Nginx/Caddy pointing to `localhost:8080`. You can run `npm run codex:chat` alongside the server for CLI interaction.
 
+### Dashboard prototype
+
+Visit `http://<host>:8080/dashboard` to see the placeholder dashboard (served from `public/dashboard.html`). The page currently loads mock content; once token parsing is wired up you can populate it with real account metadata and session stats.
+
 ### One-command setup for Linux
 
 ```bash
