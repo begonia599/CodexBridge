@@ -6,6 +6,7 @@ codex-data/
 .codex/
 .codex/*
 .codex/**/*
+auth.json
 .env
 .env.local
 *.log
