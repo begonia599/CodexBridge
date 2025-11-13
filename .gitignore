@@ -3,6 +3,9 @@ node_modules/
 codex-data/
 .codex_thread.json
 .codex_threads.json
+.codex/
+.codex/*
+.codex/**/*
 .env
 .env.local
 *.log
