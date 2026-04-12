@@ -6,6 +6,7 @@
   "scripts": {
     "codex:chat": "node chat.js",
     "codex:server": "node server.js",
+    "wave:server": "node wave-bridge.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],

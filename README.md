@@ -4,6 +4,15 @@
 
 CodexBridge wraps the official Codex CLI/SDK and exposes it as an OpenAI-compatible `/v1/chat/completions` endpoint. It also ships with a tiny CLI so you can talk to Codex locally. Any OpenAI-style client (OpenWebUI, Cherry Studio, curl, etc.) can treat CodexBridge as a drop-in model.
 
+## Project status
+
+This repository currently contains two bridge entry points:
+
+- **`npm run codex:server`** – the original SDK-backed bridge in `server.js`
+- **`npm run wave:server`** – a thinner CLI-backed bridge in `wave-bridge.js` that shells out to `codex exec`
+
+The CLI-backed path is useful when you only need a local OpenAI-compatible endpoint for tools like Wave Terminal, or when the SDK-backed path does not start cleanly in your environment.
+
 ## Highlights
 
 - **OpenAI-compatible API** – `/v1/chat/completions` (sync + SSE) plus `/v1/models`.
@@ -79,6 +88,86 @@ curl -N http://localhost:8080/v1/chat/completions \
 ```
 
 Response is SSE (`data: {...}`) ending with `data: [DONE]`.
+
+## Wave Terminal quickstart
+
+Wave Terminal supports custom AI modes backed by any OpenAI-compatible `/v1/chat/completions` endpoint. The CLI-backed bridge is the simplest way to use your existing Codex OAuth login from Wave.
+
+### 1. Authenticate Codex locally
+
+```bash
+codex login
+```
+
+This stores your Codex auth locally under `~/.codex/`.
+
+### 2. Configure the bridge
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and set at least:
+
+```ini
+PORT=8080
+CODEX_MODEL=gpt-5-codex
+CODEX_REASONING=high
+CODEX_BRIDGE_API_KEY=replace-with-a-random-secret
+CODEX_SKIP_GIT_CHECK=true
+CODEX_SANDBOX_MODE=workspace-write
+CODEX_WORKDIR=/absolute/path/to/your/workspace
+CODEX_APPROVAL_POLICY=never
+```
+
+### 3. Start the Wave-friendly bridge
+
+```bash
+npm run wave:server
+```
+
+Test it before wiring up Wave:
+
+```bash
+curl http://localhost:8080/health
+
+curl http://localhost:8080/v1/chat/completions \
+  -H "content-type: application/json" \
+  -H "authorization: Bearer replace-with-a-random-secret" \
+  -d '{"model":"gpt-5-codex:high","messages":[{"role":"user","content":"reply with exactly ok"}]}'
+```
+
+### 4. Store the API key in Wave
+
+```bash
+wsh secret set WAVE_CODEXBRIDGE_KEY=replace-with-a-random-secret
+```
+
+### 5. Create `~/.config/waveterm/waveai.json`
+
+```json
+{
+  "codex-local": {
+    "display:name": "Codex via Bridge",
+    "display:icon": "server",
+    "display:description": "Local Codex OAuth bridge on localhost:8080",
+    "ai:apitype": "openai-chat",
+    "ai:model": "gpt-5-codex:high",
+    "ai:thinkinglevel": "high",
+    "ai:endpoint": "http://localhost:8080/v1/chat/completions",
+    "ai:apitokensecretname": "WAVE_CODEXBRIDGE_KEY",
+    "ai:capabilities": ["tools"]
+  }
+}
+```
+
+Wave should pick up the new mode without changing your existing default mode. If the mode list is already open, close and reopen the picker.
+
+### Notes and limitations
+
+- `wave-bridge.js` is intentionally minimal. It is optimized for local usage and Wave/OpenAI-compatible chat clients.
+- The CLI-backed bridge does not currently preserve multi-turn session state between requests.
+- The SDK-backed server remains the more complete implementation when it works in your environment.
 
 ### Multimodal input
 
