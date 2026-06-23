@@ -227,12 +227,36 @@
         refreshBtn: document.getElementById("refresh-btn"),
       };
 
+      const API_KEY_STORAGE = "codexbridge_api_key";
+
+      function fetchDashboard(key) {
+        return fetch(`${API_BASE}/api/dashboard`, {
+          cache: "no-store",
+          headers: key ? { Authorization: `Bearer ${key}` } : {},
+        });
+      }
+
       async function loadDashboard() {
         elements.refreshBtn.disabled = true;
         try {
-          const response = await fetch(`${API_BASE}/api/dashboard`, {
-            cache: "no-store",
-          });
+          let key = localStorage.getItem(API_KEY_STORAGE) || "";
+          let response = await fetchDashboard(key);
+          if (response.status === 401) {
+            key =
+              window.prompt(
+                "需要 API Key（CODEX_BRIDGE_API_KEY）才能查看仪表盘数据：",
+              ) || "";
+            if (key) {
+              localStorage.setItem(API_KEY_STORAGE, key);
+              response = await fetchDashboard(key);
+            }
+          }
+          if (response.status === 401) {
+            localStorage.removeItem(API_KEY_STORAGE);
+            elements.tokenList.innerHTML =
+              '<div class="empty">API Key 无效或缺失，无法加载仪表盘数据。点击“刷新数据”重试。</div>';
+            return;
+          }
           if (!response.ok) throw new Error("API unreachable");
           const data = await response.json();
           renderStats(data.stats);

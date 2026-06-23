@@ -11,7 +11,7 @@ import { Codex } from "@openai/codex-sdk";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const DEFAULT_MODEL = process.env.CODEX_MODEL ?? "gpt-5-codex";
+const DEFAULT_MODEL = process.env.CODEX_MODEL ?? "gpt-5.5";
 const DEFAULT_REASONING =
   process.env.CODEX_REASONING ??
   process.env.CODEX_MODEL_REASONING ??
@@ -25,7 +25,7 @@ const SHOULD_SKIP_GIT =
   process.env.CODEX_SKIP_GIT_CHECK === "false" ? false : true;
 const API_KEY = process.env.CODEX_BRIDGE_API_KEY ?? "123321";
 const SANDBOX_MODE = normalizeSandboxMode(
-  process.env.CODEX_SANDBOX_MODE ?? "danger-full-access",
+  process.env.CODEX_SANDBOX_MODE ?? "read-only",
 );
 const WORKING_DIRECTORY = resolveWorkingDirectory(process.env.CODEX_WORKDIR);
 const NETWORK_ACCESS = readBooleanEnv(
@@ -50,41 +50,69 @@ const CODEX_STATE_DIR =
 const CODEX_AUTH_FILE =
   process.env.CODEX_AUTH_FILE ?? path.join(CODEX_STATE_DIR, "auth.json");
 const APP_VERSION = process.env.npm_package_version ?? "dev";
+const DYNAMIC_MODELS = readBooleanEnv(process.env.CODEX_DYNAMIC_MODELS, true);
+const MODELS_TTL_MS =
+  Number(process.env.CODEX_MODELS_TTL_MS ?? 300000) || 300000;
+const CODEX_MODELS_ENDPOINT =
+  process.env.CODEX_MODELS_ENDPOINT ??
+  "https://chatgpt.com/backend-api/codex/models";
+const CODEX_CLIENT_VERSION =
+  process.env.CODEX_CLIENT_VERSION ?? (await detectClientVersion()) ?? "0.142.0";
 
-const MODEL_PRESETS = [
+const DEFAULT_REASONING_MENU = [
+  { level: "low", label: "Low", description: "" },
+  { level: "medium", label: "Medium", description: "" },
+  { level: "high", label: "High", description: "" },
+  { level: "xhigh", label: "X-High", description: "" },
+];
+
+// Fallback model list — used only when dynamic backend listing is disabled
+// (CODEX_DYNAMIC_MODELS=false) or unreachable (API-key deployments, offline).
+// The live source of truth is the Codex backend; see ensureModels().
+const STATIC_PRESETS = [
   {
-    id: "gpt-5-codex",
-    label: "GPT-5-Codex",
-    description: "面向复杂开发任务的旗舰 Codex，适合深度修改代码与调用多种工具。",
+    id: "gpt-5.5",
+    label: "GPT-5.5",
+    description: "当前旗舰（2026-04 起为 Codex 默认模型），自我校验，适合复杂编码、计算机操作与研究类工作流。",
     reasonings: [
-      { level: "low", label: "Low", description: "响应最快，推理深度最低，适合简单改动。" },
+      { level: "low", label: "Low", description: "响应快，推理深度低，适合简单改动。" },
       { level: "medium", label: "Medium", description: "推理深度与速度折中（默认）。" },
-      { level: "high", label: "High", description: "推理深度最高，适合疑难杂症与大型重构。" },
+      { level: "high", label: "High", description: "推理深度高，适合疑难杂症与大型重构。" },
+      { level: "xhigh", label: "X-High", description: "最大推理深度，启用扩展推理链，适合最复杂任务（开销最高）。" },
     ],
     defaultReasoning: "medium",
   },
   {
-    id: "gpt-5-codex-mini",
-    label: "GPT-5-Codex-Mini",
-    description: "轻量版 Codex，适合日常增删改查与脚本编辑，成本更低。",
+    id: "gpt-5.4",
+    label: "GPT-5.4",
+    description: "上一代旗舰，gpt-5.5 尚未在账号开放时的回退选项。",
+    reasonings: [
+      { level: "low", label: "Low", description: "响应快，推理深度低。" },
+      { level: "medium", label: "Medium", description: "推理深度与速度折中（默认）。" },
+      { level: "high", label: "High", description: "推理深度高，适合大型重构。" },
+      { level: "xhigh", label: "X-High", description: "最大推理深度（开销最高）。" },
+    ],
+    defaultReasoning: "medium",
+  },
+  {
+    id: "gpt-5.4-mini",
+    label: "GPT-5.4-Mini",
+    description: "轻量高效版，适合响应式编码任务与子代理，成本更低。",
     reasonings: [
       { level: "low", label: "Low", description: "最快速的响应，适合简单编辑。" },
       { level: "medium", label: "Medium", description: "在速度与质量之间取得平衡（默认）。" },
-    ],
-    defaultReasoning: "medium",
-  },
-  {
-    id: "gpt-5",
-    label: "GPT-5",
-    description: "通用型 GPT-5，覆盖广泛常识与自然语言任务，侧重综合推理。",
-    reasonings: [
-      { level: "low", label: "Low", description: "高速度模式，适合问答/总结等轻负载任务。" },
-      { level: "medium", label: "Medium", description: "标准推理深度（默认），适合大多数对话场景。" },
-      { level: "high", label: "High", description: "最大化推理能力，适合复杂需求或长篇创作。" },
+      { level: "high", label: "High", description: "更深推理，适合较复杂的轻量任务。" },
+      { level: "xhigh", label: "X-High", description: "最大推理深度（开销最高）。" },
     ],
     defaultReasoning: "medium",
   },
 ];
+
+// Live model list: dynamic (Codex backend) when available, static otherwise.
+let activePresets = STATIC_PRESETS;
+let modelsSource = "static";
+let modelsFetchedAt = 0;
+let modelsInFlight = null;
 
 const codex = new Codex();
 const inMemoryThreads = new Map();
@@ -104,7 +132,7 @@ if (await fileExists(DASHBOARD_HTML)) {
   app.get("/dashboard", (_req, res) => {
     res.sendFile(DASHBOARD_HTML);
   });
-  app.get("/api/dashboard", async (_req, res) => {
+  app.get("/api/dashboard", requireApiKey, async (_req, res) => {
     try {
       const snapshot = await buildDashboardSnapshot();
       res.json(snapshot);
@@ -118,33 +146,15 @@ if (await fileExists(DASHBOARD_HTML)) {
     }
   });
 }
-app.use((req, res, next) => {
-  if (req.path === "/health") return next();
-  if (!API_KEY) return next();
-  const authHeader = req.get("authorization") ?? "";
-  let suppliedKey = null;
-  if (authHeader.toLowerCase().startsWith("bearer ")) {
-    suppliedKey = authHeader.slice(7).trim();
-  } else if (req.get("x-api-key")) {
-    suppliedKey = req.get("x-api-key");
-  }
-  if (suppliedKey !== API_KEY) {
-    return res.status(401).json({
-      error: {
-        message: "Invalid or missing API key.",
-        type: "unauthorized",
-      },
-    });
-  }
-  return next();
-});
+app.use(requireApiKey);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.get("/v1/models", (_req, res) => {
-  const flattened = MODEL_PRESETS.flatMap((model) =>
+app.get("/v1/models", async (_req, res) => {
+  await ensureModels();
+  const flattened = activePresets.flatMap((model) =>
     model.reasonings.map((reasoning) => ({
       object: "model",
       id: `${model.id}:${reasoning.level}`,
@@ -160,7 +170,7 @@ app.get("/v1/models", (_req, res) => {
     object: "list",
     data: flattened,
     defaults: {
-      model: `${DEFAULT_MODEL}:${DEFAULT_REASONING}`,
+      model: `${defaultModelId()}:${DEFAULT_REASONING}`,
     },
   });
 });
@@ -262,9 +272,20 @@ app.post("/v1/chat/completions", async (req, res) => {
     });
   }
   const codexInput = finalStructuredPrompt ?? finalPrompt;
-  const turnOptions = {};
+  const abortController = new AbortController();
+  let clientGone = false;
+  res.on("close", () => {
+    // Fired on normal completion too; only abort if we never finished writing,
+    // i.e. the client hung up mid-run. Stops the (expensive) Codex turn.
+    if (!res.writableEnded) {
+      clientGone = true;
+      abortController.abort();
+    }
+  });
+  const turnOptions = { signal: abortController.signal };
   if (outputSchema) turnOptions.outputSchema = outputSchema;
   const attachmentCleanups = collectAttachmentCleanups(normalizedMessages);
+  await ensureModels();
   const { resolvedModel, resolvedReasoning } = resolveModelAndReasoning({
     model: model ?? DEFAULT_MODEL,
     reasoning: reasoning_effort ?? req.body?.model_reasoning_effort,
@@ -372,6 +393,7 @@ app.post("/v1/chat/completions", async (req, res) => {
       usage,
     });
   } catch (error) {
+    if (clientGone) return;
     console.error("Codex run failed:", error);
     return res.status(500).json({
       error: {
@@ -403,10 +425,35 @@ await new Promise((resolve) => {
   });
 });
 
+// Warm the model cache in the background so the first request is fast and the
+// startup log shows whether the dynamic source is reachable.
+ensureModels().catch(() => {});
+
+function requireApiKey(req, res, next) {
+  if (req.path === "/health") return next();
+  if (!API_KEY) return next();
+  const authHeader = req.get("authorization") ?? "";
+  let suppliedKey = null;
+  if (authHeader.toLowerCase().startsWith("bearer ")) {
+    suppliedKey = authHeader.slice(7).trim();
+  } else if (req.get("x-api-key")) {
+    suppliedKey = req.get("x-api-key");
+  }
+  if (suppliedKey !== API_KEY) {
+    return res.status(401).json({
+      error: {
+        message: "Invalid or missing API key.",
+        type: "unauthorized",
+      },
+    });
+  }
+  return next();
+}
+
 function normalizeReasoning(value) {
   if (!value) return null;
   const lowered = String(value).toLowerCase();
-  if (["low", "medium", "high"].includes(lowered)) {
+  if (["minimal", "low", "medium", "high", "xhigh"].includes(lowered)) {
     return lowered;
   }
   return null;
@@ -532,10 +579,134 @@ function resolveSessionId(req) {
   );
 }
 
+async function detectClientVersion() {
+  try {
+    const resolved = import.meta.resolve("@openai/codex-sdk");
+    const pkgUrl = new URL("../package.json", resolved);
+    const raw = await fs.readFile(fileURLToPath(pkgUrl), "utf8");
+    return JSON.parse(raw).version ?? null;
+  } catch {
+    return null;
+  }
+}
+
+async function readCodexTokens() {
+  const auth = await readJsonFile(CODEX_AUTH_FILE);
+  if (!auth) return null;
+  const tokens = auth.tokens ?? {};
+  const accessToken =
+    tokens.access_token ?? tokens.accessToken ?? auth.access_token ?? null;
+  const accountId = tokens.account_id ?? auth.account_id ?? null;
+  return accessToken ? { accessToken, accountId } : null;
+}
+
+function titleCaseEffort(effort) {
+  const e = String(effort).toLowerCase();
+  if (e === "xhigh") return "X-High";
+  return e.charAt(0).toUpperCase() + e.slice(1);
+}
+
+function presetFromBackendModel(model) {
+  const reasonings = (
+    Array.isArray(model.supported_reasoning_levels)
+      ? model.supported_reasoning_levels
+      : []
+  )
+    .filter((r) => r?.effort)
+    .map((r) => ({
+      level: String(r.effort).toLowerCase(),
+      label: titleCaseEffort(r.effort),
+      description: r.description ?? "",
+    }));
+  const defaultReasoning =
+    normalizeReasoning(model.default_reasoning_level) ??
+    reasonings.find((r) => r.level === "medium")?.level ??
+    reasonings[0]?.level ??
+    DEFAULT_REASONING;
+  return {
+    id: model.slug,
+    label: model.display_name ?? model.slug,
+    description: model.description ?? "",
+    reasonings: reasonings.length ? reasonings : DEFAULT_REASONING_MENU,
+    defaultReasoning,
+  };
+}
+
+async function fetchBackendModels() {
+  const creds = await readCodexTokens();
+  if (!creds?.accessToken) {
+    throw new Error("no Codex access token in auth.json");
+  }
+  const url = `${CODEX_MODELS_ENDPOINT}?client_version=${encodeURIComponent(
+    CODEX_CLIENT_VERSION,
+  )}`;
+  const headers = { authorization: `Bearer ${creds.accessToken}` };
+  if (creds.accountId) headers["chatgpt-account-id"] = creds.accountId;
+  const response = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  const body = await response.json();
+  const models = Array.isArray(body?.models) ? body.models : [];
+  const presets = models
+    .filter((m) => m?.slug && m.visibility !== "hide")
+    .map(presetFromBackendModel);
+  if (!presets.length) {
+    throw new Error("no visible models returned");
+  }
+  return presets;
+}
+
+// Refresh activePresets from the Codex backend when the TTL has elapsed.
+// Never throws: on failure it keeps the last good list (or the static
+// fallback) and retries after the next TTL window. Concurrent callers share
+// a single in-flight request.
+async function ensureModels() {
+  if (!DYNAMIC_MODELS) return;
+  if (modelsFetchedAt && Date.now() - modelsFetchedAt < MODELS_TTL_MS) return;
+  if (modelsInFlight) {
+    await modelsInFlight;
+    return;
+  }
+  modelsInFlight = fetchBackendModels()
+    .then((presets) => {
+      activePresets = presets;
+      modelsSource = "backend";
+      console.log(
+        `[Codex Bridge] models refreshed from backend: ${presets
+          .map((p) => p.id)
+          .join(", ")}`,
+      );
+    })
+    .catch((error) => {
+      console.warn(
+        `[Codex Bridge] dynamic model listing unavailable, using ${modelsSource} presets:`,
+        error?.message ?? error,
+      );
+    })
+    .finally(() => {
+      modelsFetchedAt = Date.now();
+      modelsInFlight = null;
+    });
+  await modelsInFlight;
+}
+
+function defaultModelId() {
+  return (
+    getModelPreset(DEFAULT_MODEL)?.id ?? activePresets[0]?.id ?? DEFAULT_MODEL
+  );
+}
+
 function getModelPreset(modelId) {
   if (!modelId) return null;
   const normalized = String(modelId).toLowerCase();
-  return MODEL_PRESETS.find((preset) => preset.id === normalized) ?? null;
+  return (
+    activePresets.find((preset) => preset.id.toLowerCase() === normalized) ??
+    null
+  );
 }
 
 function resolveModelAndReasoning({ model, reasoning }) {
@@ -549,18 +720,19 @@ function resolveModelAndReasoning({ model, reasoning }) {
   const split = String(model).toLowerCase().split(":");
   const modelId = split[0];
   const appendedReasoning = split[1];
-  const modelPreset = getModelPreset(modelId) ?? getModelPreset(DEFAULT_MODEL);
+  const modelPreset =
+    getModelPreset(modelId) ?? getModelPreset(DEFAULT_MODEL) ?? activePresets[0];
 
+  // Pass through any reasoning level the SDK accepts (minimal..xhigh); the
+  // model/engine is the final authority on what it supports. The per-model
+  // preset list is advisory (drives /v1/models + defaults), not a hard gate.
   const requestedReasoning = normalizeReasoning(reasoning ?? appendedReasoning);
-  const allowedReasoning =
-    requestedReasoning &&
-    modelPreset?.reasonings?.some((r) => r.level === requestedReasoning)
-      ? requestedReasoning
-      : modelPreset?.defaultReasoning ?? DEFAULT_REASONING;
+  const resolvedReasoning =
+    requestedReasoning ?? modelPreset?.defaultReasoning ?? DEFAULT_REASONING;
 
   return {
     resolvedModel: modelPreset?.id ?? DEFAULT_MODEL,
-    resolvedReasoning: allowedReasoning,
+    resolvedReasoning,
   };
 }
 
@@ -996,7 +1168,13 @@ function formatTokenPreview(token) {
   return `${token.slice(0, 12)}…${token.slice(-6)}`;
 }
 
-async function getOrCreateThread(sessionId, threadOptions) {
+async function getOrCreateThread(sessionId, threadOptions, { ephemeral = false } = {}) {
+  if (ephemeral) {
+    // Ephemeral requests carry no stable session id; never cache or persist
+    // them, otherwise inMemoryThreads grows unbounded across stateless calls.
+    return { thread: codex.startThread(threadOptions) };
+  }
+
   const cached = inMemoryThreads.get(sessionId);
   if (cached) return cached;
 
@@ -1059,11 +1237,20 @@ function formatUsage(raw) {
   if (!raw) return undefined;
   const prompt = raw.input_tokens ?? 0;
   const completion = raw.output_tokens ?? 0;
-  return {
+  const usage = {
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: prompt + completion,
   };
+  if (typeof raw.cached_input_tokens === "number") {
+    usage.prompt_tokens_details = { cached_tokens: raw.cached_input_tokens };
+  }
+  if (typeof raw.reasoning_output_tokens === "number") {
+    usage.completion_tokens_details = {
+      reasoning_tokens: raw.reasoning_output_tokens,
+    };
+  }
+  return usage;
 }
 
 function extractAssistantResponse(turn) {
@@ -1110,9 +1297,11 @@ async function handleStreamResponse({
     model: threadOptions.model,
   };
   const sendChunk = (payload) => {
+    if (res.writableEnded || res.destroyed) return;
     res.write(`data: ${JSON.stringify(payload)}\n\n`);
   };
   const sendDone = () => {
+    if (res.writableEnded || res.destroyed) return;
     res.write("data: [DONE]\n\n");
   };
 
@@ -1166,9 +1355,11 @@ async function handleStreamResponse({
     }
     sendDelta({}, "stop", usage);
     sendDone();
-    res.end();
+    if (!res.writableEnded) res.end();
   } catch (error) {
-    console.error("Codex stream failed:", error);
+    if (error?.name !== "AbortError") {
+      console.error("Codex stream failed:", error);
+    }
     sendChunk({
       ...chunkBase,
       choices: [
@@ -1184,7 +1375,7 @@ async function handleStreamResponse({
       },
     });
     sendDone();
-    res.end();
+    if (!res.writableEnded) res.end();
   } finally {
     await cleanupAttachmentFiles(cleanupTasks);
   }

@@ -9,7 +9,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const STATE_FILE = path.join(__dirname, ".codex_thread.json");
-const DEFAULT_MODEL = process.env.CODEX_MODEL ?? "gpt-5-codex";
+const DEFAULT_MODEL = process.env.CODEX_MODEL ?? "gpt-5.5";
 const DEFAULT_REASONING =
   process.env.CODEX_REASONING ?? process.env.CODEX_MODEL_REASONING ?? "medium";
 

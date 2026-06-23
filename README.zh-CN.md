@@ -59,7 +59,7 @@ npm run codex:server
 curl http://localhost:8080/v1/chat/completions \
   -H "content-type: application/json" \
   -H "authorization: Bearer 123321" \
-  -d '{"model":"gpt-5-codex:medium","session_id":"demo","messages":[{"role":"user","content":"ls"}]}'
+  -d '{"model":"gpt-5.5:medium","session_id":"demo","messages":[{"role":"user","content":"ls"}]}'
 ```
 
 ### session_id 与会话持久化
@@ -75,7 +75,7 @@ curl http://localhost:8080/v1/chat/completions \
 curl -N http://localhost:8080/v1/chat/completions \
   -H "content-type: application/json" \
   -H "authorization: Bearer 123321" \
-  -d '{"model":"gpt-5-codex:high","session_id":"stream","stream":true,"messages":[{"role":"user","content":"一步步介绍如何使用 npm init 创建项目"}]}'
+  -d '{"model":"gpt-5.5:high","session_id":"stream","stream":true,"messages":[{"role":"user","content":"一步步介绍如何使用 npm init 创建项目"}]}'
 ```
 
 ### 多模态输入
@@ -91,7 +91,7 @@ curl -N http://localhost:8080/v1/chat/completions \
 
 ```json
 {
-  "model": "gpt-5-codex",
+  "model": "gpt-5.5",
   "session_id": "lint",
   "response_format": {
     "type": "json_schema",
@@ -175,8 +175,8 @@ docker run --rm -p 8080:8080 \
 | 变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP 端口 |
-| `CODEX_MODEL` | `gpt-5-codex` | 默认模型 |
-| `CODEX_REASONING` | `medium` | 默认推理等级 (`low` / `medium` / `high`) |
+| `CODEX_MODEL` | `gpt-5.5` | 默认模型 |
+| `CODEX_REASONING` | `medium` | 默认推理等级 (`minimal` / `low` / `medium` / `high` / `xhigh`) |
 | `CODEX_BRIDGE_API_KEY` | `123321` | API key（`Authorization: Bearer` / `x-api-key`） |
 | `CODEX_SKIP_GIT_CHECK` | `true` | 是否跳过 Codex “受信任 Git 仓库”检查 |
 | `CODEX_SANDBOX_MODE` | `read-only` | `read-only` / `workspace-write` / `danger-full-access` |
@@ -187,6 +187,10 @@ docker run --rm -p 8080:8080 \
 | `CODEX_LOG_REQUESTS` | `false` | 打印请求 payload 以便调试 |
 | `CODEX_REQUIRE_SESSION_ID` | `false` | `true` 时缺少 session ID 会直接返回 400 |
 | `CODEX_JSON_LIMIT` | `10mb` | `express.json()` 请求体上限 |
+| `CODEX_DYNAMIC_MODELS` | `true` | `/v1/models` 从 Codex 后端拉取实时模型列表；不可达时回退静态列表 |
+| `CODEX_MODELS_TTL_MS` | `300000` | 动态模型列表的缓存 TTL（毫秒） |
+| `CODEX_MODELS_ENDPOINT` | Codex 后端 | 覆盖模型列表端点 URL |
+| `CODEX_CLIENT_VERSION` | SDK 版本 | 发往模型列表端点的 `client_version` |
 
 ## 常见问题
 
