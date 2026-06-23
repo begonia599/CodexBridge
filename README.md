@@ -59,7 +59,7 @@ npm run codex:server
 curl http://localhost:8080/v1/chat/completions \
   -H "content-type: application/json" \
   -H "authorization: Bearer 123321" \
-  -d '{"model":"gpt-5-codex:medium","session_id":"demo","messages":[{"role":"user","content":"ls"}]}'
+  -d '{"model":"gpt-5.5:medium","session_id":"demo","messages":[{"role":"user","content":"ls"}]}'
 ```
 
 ### Session IDs & persistence
@@ -75,7 +75,7 @@ curl http://localhost:8080/v1/chat/completions \
 curl -N http://localhost:8080/v1/chat/completions \
   -H "content-type: application/json" \
   -H "authorization: Bearer 123321" \
-  -d '{"model":"gpt-5-codex:high","session_id":"stream","stream":true,"messages":[{"role":"user","content":"Explain how to run npm init step by step."}]}'
+  -d '{"model":"gpt-5.5:high","session_id":"stream","stream":true,"messages":[{"role":"user","content":"Explain how to run npm init step by step."}]}'
 ```
 
 Response is SSE (`data: {...}`) ending with `data: [DONE]`.
@@ -95,7 +95,7 @@ CodexBridge forwards OpenAI `response_format` to Codex `outputSchema`:
 
 ```json
 {
-  "model": "gpt-5-codex",
+  "model": "gpt-5.5",
   "session_id": "lint",
   "response_format": {
     "type": "json_schema",
@@ -183,8 +183,8 @@ docker run --rm -p 8080:8080 \
 | Variable | Default | Description |
 | --- | --- | --- |
 | `PORT` | `8080` | HTTP port |
-| `CODEX_MODEL` | `gpt-5-codex` | Default model |
-| `CODEX_REASONING` | `medium` | Default reasoning effort (`low` / `medium` / `high`) |
+| `CODEX_MODEL` | `gpt-5.5` | Default model |
+| `CODEX_REASONING` | `medium` | Default reasoning effort (`minimal` / `low` / `medium` / `high` / `xhigh`) |
 | `CODEX_BRIDGE_API_KEY` | `123321` | API key for `Authorization: Bearer` / `x-api-key` |
 | `CODEX_SKIP_GIT_CHECK` | `true` | Skip Codex “trusted Git repo” requirement |
 | `CODEX_SANDBOX_MODE` | `read-only` | `read-only` / `workspace-write` / `danger-full-access` |
@@ -195,6 +195,10 @@ docker run --rm -p 8080:8080 \
 | `CODEX_LOG_REQUESTS` | `false` | Log incoming payloads |
 | `CODEX_REQUIRE_SESSION_ID` | `false` | Require session identifiers (`true` recommended for production) |
 | `CODEX_JSON_LIMIT` | `10mb` | `express.json()` body limit |
+| `CODEX_DYNAMIC_MODELS` | `true` | Fetch the live model list from the Codex backend for `/v1/models`; falls back to a static list if unreachable |
+| `CODEX_MODELS_TTL_MS` | `300000` | Cache TTL (ms) for the dynamic model list |
+| `CODEX_MODELS_ENDPOINT` | Codex backend | Override the model-listing endpoint URL |
+| `CODEX_CLIENT_VERSION` | SDK version | `client_version` sent to the model-listing endpoint |
 
 ## Troubleshooting
 
