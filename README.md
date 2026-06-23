@@ -41,7 +41,7 @@ npm run codex:chat
 - `/reset` starts a new Codex thread.
 - `/exit` leaves the REPL.
 
-Thread IDs are cached in `.codex_thread.json`, so you can close the CLI and continue later.
+Thread IDs are cached in `.codex_threads.json`, so you can close the CLI and continue later.
 
 ## HTTP bridge
 
